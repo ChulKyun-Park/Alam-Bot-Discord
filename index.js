@@ -15,9 +15,11 @@ const {
   TextInputStyle,
 } = require("discord.js");
 
-const BOT_TOKEN      = process.env.BOT_TOKEN;
-const GAS_WEB_APP_URL = process.env.GAS_WEB_APP_URL;
-const PORT           = Number(process.env.PORT || 3000);
+// ── 환경변수 ─────────────────────────────────────────────────────────────────
+const BOT_TOKEN           = process.env.BOT_TOKEN;
+const GAS_WEB_APP_URL     = process.env.GAS_WEB_APP_URL;
+const PORT                = Number(process.env.PORT || 3000);
+const ANNOUNCE_CHANNEL_ID = process.env.ANNOUNCE_CHANNEL_ID || ""; // 선택
 
 if (!BOT_TOKEN)       throw new Error("환경변수 BOT_TOKEN이 비어 있습니다.");
 if (!GAS_WEB_APP_URL) throw new Error("환경변수 GAS_WEB_APP_URL이 비어 있습니다.");
@@ -39,21 +41,38 @@ function log(...args) {
   console.log(new Date().toISOString(), "[BOT]", ...args);
 }
 
-// ── GAS 연동 ────────────────────────────────────────────────────────────────
-async function postToGas(payload) {
-  const res = await fetch(GAS_WEB_APP_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  const text = await res.text().catch(() => "");
-  if (!res.ok) throw new Error(`GAS 응답 오류: ${res.status} ${text}`);
-  log("GAS 응답:", text.slice(0, 200));
-  return text;
+// ── GAS 연동 (타임아웃 10s + 1회 재시도) ────────────────────────────────────
+async function postToGas(payload, retriesLeft = 1) {
+  const controller = new AbortController();
+  const tid        = setTimeout(() => controller.abort(), 10_000);
+
+  try {
+    const res = await fetch(GAS_WEB_APP_URL, {
+      method : "POST",
+      headers: { "Content-Type": "application/json" },
+      body   : JSON.stringify(payload),
+      signal : controller.signal,
+    });
+    clearTimeout(tid);
+
+    const text = await res.text().catch(() => "");
+    if (!res.ok) throw new Error(`GAS HTTP ${res.status}`);
+    log(`GAS OK row_id=${payload.row_id} action=${payload.action}:`, text.slice(0, 120));
+    return text;
+  } catch (e) {
+    clearTimeout(tid);
+    const isAbort = e.name === "AbortError";
+    if (retriesLeft > 0) {
+      log(`GAS 재시도 (${isAbort ? "타임아웃" : e.message}) row_id=${payload.row_id}`);
+      await new Promise((r) => setTimeout(r, 2000));
+      return postToGas(payload, retriesLeft - 1);
+    }
+    throw e;
+  }
 }
 
 // ── customId 파서 / 빌더 ─────────────────────────────────────────────────────
-// 규격: "<action>:<row_id>"  (예: "accept:ROW-003")
+// 규격: "<action>:<row_id>"  (예: accept:T-20260222-001)
 function parseCustomId(customId) {
   const str = String(customId);
   const idx = str.indexOf(":");
@@ -76,19 +95,19 @@ function buildAssignEmbed({ project, language, file_link, assignee_real_name, pm
   return new EmbedBuilder()
     .setTitle("📌 번역 작업 배정")
     .addFields(
-      { name: "프로젝트",  value: String(project             || "-"), inline: true  },
-      { name: "언어",      value: String(language            || "-"), inline: true  },
-      { name: "담당자",    value: String(assignee_real_name  || "-"), inline: true  },
-      { name: "PM",        value: String(pm_real_name        || "-"), inline: true  },
+      { name: "프로젝트",  value: String(project            || "-"), inline: true  },
+      { name: "언어",      value: String(language           || "-"), inline: true  },
+      { name: "담당자",    value: String(assignee_real_name || "-"), inline: true  },
+      { name: "PM",        value: String(pm_real_name       || "-"), inline: true  },
       { name: "파일 링크", value: file_link ? String(file_link) : "-", inline: false },
-      { name: "row_id",    value: String(row_id              || "-"), inline: false },
+      { name: "row_id",    value: String(row_id             || "-"), inline: false },
     )
     .setFooter({ text: STAGE_FOOTER[stage] || "" });
 }
 
-// Embed 필드에서 작업 정보 역파싱 (연속 DM 전송용)
+// DM 메시지의 Embed 필드를 역파싱 (연속 DM 전송용)
 function parseEmbedFields(embed) {
-  const get = (name) => embed.fields?.find((f) => f.name === name)?.value || "-";
+  const get  = (name) => embed.fields?.find((f) => f.name === name)?.value || "-";
   const link = get("파일 링크");
   return {
     project            : get("프로젝트"),
@@ -135,12 +154,25 @@ function buildDoneButtons(row_id) {
 async function sendDm(discord_user_id, embedData, stage) {
   const user  = await client.users.fetch(String(discord_user_id));
   const embed = buildAssignEmbed({ ...embedData, stage });
-  const componentMap = {
+  const buttonMap = {
     ACK      : [buildAckButtons(embedData.row_id)],
     PROGRESS : [buildProgressButtons(embedData.row_id)],
     DONE     : [buildDoneButtons(embedData.row_id)],
   };
-  return user.send({ embeds: [embed], components: componentMap[stage] || [] });
+  return user.send({ embeds: [embed], components: buttonMap[stage] || [] });
+}
+
+// ── 공지 채널 전송 (선택) ─────────────────────────────────────────────────────
+async function postToAnnounceChannel(embedData, stage) {
+  if (!ANNOUNCE_CHANNEL_ID) return;
+  try {
+    const ch = await client.channels.fetch(ANNOUNCE_CHANNEL_ID);
+    if (!ch || !ch.isTextBased()) return;
+    const embed = buildAssignEmbed({ ...embedData, stage });
+    await ch.send({ embeds: [embed] });
+  } catch (e) {
+    log("공지 채널 전송 실패:", e?.message || e);
+  }
 }
 
 // ── /webhook ─────────────────────────────────────────────────────────────────
@@ -163,11 +195,10 @@ app.post("/webhook", async (req, res) => {
       return res.status(400).json({ ok: false, error: "row_id 또는 discord_user_id 누락" });
     }
 
-    await sendDm(
-      discord_user_id,
-      { row_id, project, language, file_link, assignee_real_name, pm_real_name },
-      stage,
-    );
+    const embedData = { row_id, project, language, file_link, assignee_real_name, pm_real_name };
+
+    await sendDm(discord_user_id, embedData, stage);
+    await postToAnnounceChannel(embedData, stage); // 공지 채널 (ANNOUNCE_CHANNEL_ID 설정 시)
 
     log(`DM 전송 성공 row_id=${row_id} to=${discord_user_id} stage=${stage}`);
     return res.json({ ok: true });
@@ -193,28 +224,21 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (interaction.isButton()) {
       const { action, rowId } = parseCustomId(interaction.customId);
 
-      // 수락 (ACK → ACCEPTED → 다음 DM: PROGRESS)
+      // ① 수락: GAS에 ACCEPTED 기록 → PROGRESS DM 전송
       if (action === "accept") {
         await interaction.deferReply({ ephemeral: true });
-        await postToGas({
-          row_id               : rowId,
-          action               : "ACCEPTED",
-          actor_discord_user_id: actorId,
-        });
+        await postToGas({ row_id: rowId, action: "ACCEPTED", actor_discord_user_id: actorId });
         await interaction.message.edit({ components: [] }).catch(() => {});
 
-        // 동일 사용자에게 시작 버튼 DM 전송
         const origEmbed = interaction.message.embeds[0];
         if (origEmbed) {
-          const taskData = parseEmbedFields(origEmbed);
-          await sendDm(actorId, { ...taskData, row_id: rowId }, "PROGRESS");
+          await sendDm(actorId, { ...parseEmbedFields(origEmbed), row_id: rowId }, "PROGRESS");
         }
-
         await interaction.editReply("✅ 수락 완료! 준비가 되면 [▶️ 시작] 버튼을 눌러주세요.");
         return;
       }
 
-      // 거절 → 모달 표시
+      // ② 거절: 모달 표시 (사유 입력 후 doPost)
       if (action === "reject") {
         const modal = new ModalBuilder()
           .setCustomId(makeId("rejectModal", rowId))
@@ -230,35 +254,28 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return;
       }
 
-      // 시작 (ACCEPTED → IN_PROGRESS → 다음 DM: DONE)
+      // ③ 시작: GAS에 IN_PROGRESS 기록 → DONE DM 전송
       if (action === "start") {
         await interaction.deferReply({ ephemeral: true });
-        await postToGas({
-          row_id               : rowId,
-          action               : "IN_PROGRESS",
-          actor_discord_user_id: actorId,
-        });
+        await postToGas({ row_id: rowId, action: "IN_PROGRESS", actor_discord_user_id: actorId });
         await interaction.message.edit({ components: [] }).catch(() => {});
 
-        // 완료 버튼 DM 전송
         const origEmbed = interaction.message.embeds[0];
         if (origEmbed) {
-          const taskData = parseEmbedFields(origEmbed);
-          await sendDm(actorId, { ...taskData, row_id: rowId }, "DONE");
+          await sendDm(actorId, { ...parseEmbedFields(origEmbed), row_id: rowId }, "DONE");
         }
-
         await interaction.editReply("▶️ 시작 처리 완료! 작업 후 [🏁 완료] 버튼을 눌러주세요.");
         return;
       }
 
-      // 완료 → 메모 모달
+      // ④ 완료: 모달 표시 (done_note 입력 후 doPost)
       if (action === "done") {
         const modal = new ModalBuilder()
           .setCustomId(makeId("doneModal", rowId))
           .setTitle("작업 완료 메모");
         const input = new TextInputBuilder()
           .setCustomId("done_note")
-          .setLabel("완료 메모 (선택 사항)")
+          .setLabel("완료 메모 또는 파일 링크 (선택 사항)")
           .setStyle(TextInputStyle.Paragraph)
           .setRequired(false)
           .setMaxLength(500);
@@ -272,7 +289,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (interaction.isModalSubmit()) {
       const { action, rowId } = parseCustomId(interaction.customId);
 
-      // 거절 사유 확정
+      // 거절 사유 제출
       if (action === "rejectModal") {
         const reason = interaction.fields.getTextInputValue("reject_reason");
         await interaction.deferReply({ ephemeral: true });
@@ -287,7 +304,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return;
       }
 
-      // 완료 메모 확정
+      // 완료 메모 제출
       if (action === "doneModal") {
         const note = interaction.fields.getTextInputValue("done_note").trim();
         await interaction.deferReply({ ephemeral: true });

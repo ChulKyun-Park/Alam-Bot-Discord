@@ -4,285 +4,94 @@
 
 ---
 
-## 탭 구조 요약 (Alam_Bot_Settings.xlsx)
+## 변경 요약 (2026-02-22)
 
-### batch_tasks — 작업 배정 원부
-
-| 컬럼명 | 설명 | PM 입력 | 봇 자동 기록 |
-|---|---|---|---|
-| `row_id` | 행 고유 키 (비워두면 GAS가 자동 생성) | 선택 | ✅ 자동 생성 |
-| `project` | 프로젝트명 | ✅ | |
-| `language` | 언어 코드 (KR, EN, CH, JP, ES, ID, TH) | ✅ | |
-| `file_link` | 번역 파일 Google Drive 링크 | ✅ | |
-| `thread_link` | 스레드 링크 (선택) | ✅ | |
-| `assignee_real_name` | 담당자 실명 (directory.real_name과 일치해야 함) | ✅ | |
-| `pm_real_name` | PM 실명 | ✅ | |
-| `status` | 상태값 (초기값: `PENDING_ACK`) | ✅ 초기 | ✅ 갱신 |
-| `deadline_ack` | DM 전송 후 응답 마감 시각 (ISO) | | ✅ |
-| `retry_count` | 무응답 횟수 | | ✅ |
-| `reject_reason` | 거절 사유 (모달 입력) | | ✅ |
-| `created_at` | 행 생성 시각 (PM 입력 권장) | ✅ | |
-| `last_event_at` | 마지막 상태 변경 시각 | | ✅ |
-| `dm_sent_at` | DM 전송 시각 (**GAS가 자동 추가**) | | ✅ |
-| `done_note` | 완료 메모 (**GAS가 자동 추가**) | | ✅ |
-| `actor_discord_user_id` | 버튼 클릭자 Discord ID (**GAS가 자동 추가**) | | ✅ |
-
-> `dm_sent_at`, `done_note`, `actor_discord_user_id` 3개 컬럼은 GAS `ensureExtraCols()`가 최초 실행 시 자동으로 헤더를 추가합니다.
-
-**row_id 전략:** 열을 비워두면 GAS가 `T-YYYYMMDD-{행번호}` 형식으로 자동 생성합니다. PM이 직접 입력해도 무방하나 시트 내 고유해야 합니다.
+- **customId 규격 통일**: 모든 버튼/모달 ID를 `action:<row_id>` 형식으로 표준화
+- **버튼 4종 완성**: ACCEPT / REJECT(모달 사유) / START / DONE(모달 메모)
+- **postToGas 안정화**: AbortController 10초 타임아웃 + 1회 자동 재시도
+- **ANNOUNCE_CHANNEL_ID 추가**: DM 전송 시 공지 채널에도 동시 게시 (선택)
+- **GAS ensureExtraCols 확장**: doPost/checkNoResponse에서 사용하는 컬럼 전체 안전망 포함
+- **GAS 헤더 기반 컬럼 매핑**: xlsx 헤더명과 Code.gs 문자열 전수 검증 완료 (docs/sheet_schema.md)
+- **docs 추가**: `docs/sheet_schema.md`, `docs/payloads.md`
+- **테스트 스크립트 2종**: `test-webhook.ps1`, `test-gas-callback.ps1`
 
 ---
 
-### directory — 작업자 디렉토리 (실명 ↔ Discord ID 매핑)
+## CK가 마지막에 채워야 할 값 (시크릿 포함)
 
-| 컬럼명 | 설명 |
-|---|---|
-| `language` | 담당 언어 |
-| `human_id` | 내부 사용자 코드 (PM01, U001 등) |
-| `real_name` | 실명 (`batch_tasks.assignee_real_name`과 동일해야 함) |
-| `email` | 이메일 |
-| `discord_user_id` | Discord 18자리 숫자 ID |
-| `status` | `active` / `inactive` |
-
----
-
-### routing — 배정 우선순위 및 쿨다운
-
-| 컬럼명 | 설명 |
-|---|---|
-| `language` | 언어 |
-| `human_id` | 사용자 코드 |
-| `real_name` | 실명 |
-| `weight` | 우선순위 가중치 (낮을수록 우선) |
-| `cooldown_minutes` | 연속 배정 대기 시간(분) |
-| `active` | 활성 여부 |
-
----
-
-### availability — 작업자 가용 시간
-
-| 컬럼명 | 설명 |
-|---|---|
-| `language` | 언어 |
-| `human_id` | 사용자 코드 |
-| `real_name` | 실명 |
-| `timezone` | 시간대 (예: `Asia/Seoul`) |
-| `days_of_week` | 가용 요일 (쉼표 구분) |
-| `start_time` | 시작 시각 (`HH:MM:SS`) |
-| `end_time` | 종료 시각 (`HH:MM:SS`) |
-| `active` | 활성 여부 |
-
----
-
-## 상태 흐름
+### Bot `.env` 파일 (Oracle 서버)
 
 ```
-PM이 행 추가
-    │
-    ▼  (status = PENDING_ACK)
-scanPendingTasks (5분)
-    │  Discord DM 전송 (✅수락 / ❌거절 버튼)
-    ▼  (status = DM_SENT, deadline_ack 설정)
-    │
-    ├─ [✅ 수락 클릭] ─────────────────────→ ACCEPTED
-    │                                            │ 봇이 ▶️시작 버튼 DM 전송
-    │                                            ▼ (status = IN_PROGRESS)
-    │                                            │ 봇이 🏁완료 버튼 DM 전송
-    │                                            ▼ (status = DONE)
-    │
-    ├─ [❌ 거절 클릭 + 사유 모달] ──────────→ REJECTED
-    │
-    └─ [무응답 → deadline_ack 초과] ─────→ NO_RESPONSE
-           checkNoResponse (10분)           retry_count++
+# 필수 1: Discord Developer Portal → Bot → Reset Token
+BOT_TOKEN=실제_봇_토큰
+
+# 필수 2: GAS 배포 URL (아래 GAS 배포 절차 참고)
+GAS_WEB_APP_URL=https://script.google.com/macros/s/{DEPLOYMENT_ID}/exec
+
+# 선택: 공지 채널 (비워두면 비활성화)
+ANNOUNCE_CHANNEL_ID=1473144299146182891
+
+PORT=3000
 ```
+
+### GAS Script Properties (GAS 편집기 → 프로젝트 설정 → 스크립트 속성)
+
+| Property 키 | 값 |
+|---|---|
+| `SPREADSHEET_ID` | 스프레드시트 URL에서 `/d/` 뒤 문자열 |
+| `DISCORD_WEBHOOK_URL` | `http://158.180.78.10:3000/webhook` |
+
+> Script Properties는 GAS 내부에서만 참조되며 코드에 노출되지 않습니다.
 
 ---
 
 ## 시스템 아키텍처
 
 ```
-Google Sheets (GAS)
-  ├─ scanPendingTasks()  [5분 트리거]
-  │     → POST /webhook  (DM 전송 요청)
-  │
-  └─ doPost()  [GAS 웹앱]
-        ← POST GAS_WEB_APP_URL  (버튼 결과 수신, 시트 업데이트)
+[Google Sheets]
+   PM이 batch_tasks 행 추가 (status=PENDING_ACK)
+          │
+          │ scanPendingTasks (5분 트리거)
+          ▼
+[GAS callBotWebhook]
+   POST http://158.180.78.10:3000/webhook
+          │
+          ▼
+[Discord Bot /webhook]
+   작업자에게 DM (✅수락 / ❌거절 버튼)
+   공지 채널 (ANNOUNCE_CHANNEL_ID) 에도 게시
+          │
+   [버튼 클릭 / 모달 제출]
+          │
+          ▼
+[Discord Bot → GAS]
+   POST GAS_WEB_APP_URL
+   {row_id, action, reject_reason?, done_note?, actor_discord_user_id}
+          │
+          ▼
+[GAS doPost]
+   row_id로 행 검색 → status 업데이트
 
-Discord Bot (Node.js / discord.js)
-  ├─ /webhook   GAS → Bot  (DM 발송)
-  ├─ /healthz   상태 확인
-  └─ InteractionCreate
-        accept → GAS doPost + 시작 버튼 DM
-        reject → 거절 모달 → GAS doPost
-        start  → GAS doPost + 완료 버튼 DM
-        done   → 완료 메모 모달 → GAS doPost
+[checkNoResponse (10분 트리거)]
+   DM_SENT & now > deadline_ack → NO_RESPONSE + retry_count++
 ```
 
 ---
 
-## Interaction customId 규격
-
-모든 버튼과 모달의 customId는 `<action>:<row_id>` 형식을 따릅니다.
-
-| customId 예시 | 설명 |
-|---|---|
-| `accept:T-20260222-001` | 수락 버튼 |
-| `reject:T-20260222-001` | 거절 버튼 |
-| `start:T-20260222-001` | 시작 버튼 |
-| `done:T-20260222-001` | 완료 버튼 |
-| `rejectModal:T-20260222-001` | 거절 사유 모달 |
-| `doneModal:T-20260222-001` | 완료 메모 모달 |
-
----
-
-## Payload 스키마
-
-### GAS → Bot  (`POST /webhook`)
-
-```json
-{
-  "row_id"             : "T-20260222-001",
-  "discord_user_id"    : "1465904281168117861",
-  "assignee_real_name" : "홍길동",
-  "project"            : "라이선스 SUNDAY #65",
-  "language"           : "한국어",
-  "file_link"          : "https://drive.google.com/file/d/...",
-  "pm_real_name"       : "이수민",
-  "stage"              : "ACK"
-}
-```
-
-`stage` 값: `"ACK"` (수락/거절) | `"PROGRESS"` (시작) | `"DONE"` (완료)
-
-### Bot → GAS  (`POST GAS_WEB_APP_URL`)
-
-```json
-{
-  "row_id"               : "T-20260222-001",
-  "action"               : "ACCEPTED",
-  "reject_reason"        : "일정 충돌",
-  "done_note"            : "번역 완료, QA 필요",
-  "actor_discord_user_id": "1465904281168117861"
-}
-```
-
-`action` 값: `ACCEPTED` | `REJECTED` | `IN_PROGRESS` | `DONE`
-
----
-
-## CK가 마지막에 채워야 할 시크릿 3가지
-
-### 1. `BOT_TOKEN` — Discord Bot 토큰 (`.env` 파일)
+## 상태 흐름
 
 ```
-BOT_TOKEN=실제토큰값
-```
-
-발급 경로: [Discord Developer Portal](https://discord.com/developers/applications) → 앱 선택 → **Bot** → **Reset Token**
-
-### 2. `GAS_WEB_APP_URL` — GAS doPost 엔드포인트 (`.env` 파일)
-
-```
-GAS_WEB_APP_URL=https://script.google.com/macros/s/{DEPLOYMENT_ID}/exec
-```
-
-발급 경로: GAS 편집기 → **배포** → **새 배포** → 종류: **웹앱** → 실행 계정: **나** → 액세스: **모든 사용자** → 배포 → URL 복사
-
-### 3. `DISCORD_WEBHOOK_URL` — Bot의 /webhook 엔드포인트 (GAS Script Properties)
-
-```
-DISCORD_WEBHOOK_URL=https://your-oracle-server.com:3000/webhook
-```
-
-설정 경로: GAS 편집기 → **프로젝트 설정** → **스크립트 속성** → 속성 추가
-
-> 이 값은 Oracle 서버의 공인 IP 또는 도메인 + 포트입니다. `SPREADSHEET_ID`도 함께 등록하세요.
-
----
-
-## GAS 배포 절차
-
-1. [Google Apps Script](https://script.google.com)에서 새 프로젝트 생성
-2. `gas/Code.gs` 전체 내용을 붙여넣고 저장
-3. **프로젝트 설정** → **스크립트 속성** 에 두 개 등록:
-   - `SPREADSHEET_ID` = 스프레드시트 URL에서 `/d/` 뒤 문자열
-   - `DISCORD_WEBHOOK_URL` = `https://your-server.com:3000/webhook`
-4. **배포** → **새 배포** → 웹앱 → 실행: 나, 액세스: 모든 사용자 → 배포 → URL 복사 → `.env`의 `GAS_WEB_APP_URL`에 입력
-5. GAS 편집기에서 `ensureExtraCols` 함수를 1회 실행 (batch_tasks에 추가 컬럼 자동 생성)
-6. `setupTriggers` 함수를 1회 실행 (5분/10분 트리거 등록)
-
----
-
-## Oracle 서버 pm2 배포 절차
-
-### 사전 요건
-
-```bash
-# Node.js 18 이상 확인
-node -v
-
-# pm2 전역 설치
-npm install -g pm2
-```
-
-### 최초 배포
-
-```bash
-# 1. 레포 클론
-git clone https://github.com/YOUR_ORG/Alam-Bot-Discord.git
-cd Alam-Bot-Discord
-
-# 2. 의존성 설치
-npm install
-
-# 3. 환경변수 파일 생성
-cp .env.example .env
-nano .env          # BOT_TOKEN, GAS_WEB_APP_URL, PORT 입력
-
-# 4. pm2로 실행 (재부팅 후에도 자동 시작)
-pm2 start index.js --name alam-bot
-pm2 save
-pm2 startup        # 출력된 sudo 명령어 복사·실행
-```
-
-### 업데이트 배포
-
-```bash
-git pull origin main
-npm install        # 패키지 변경 시만
-pm2 reload alam-bot
-```
-
-### 주요 pm2 명령어
-
-```bash
-pm2 list                   # 프로세스 목록
-pm2 logs alam-bot          # 실시간 로그
-pm2 logs alam-bot --lines 100   # 최근 100줄
-pm2 monit                  # CPU/메모리 모니터
-pm2 stop alam-bot          # 중지
-pm2 delete alam-bot        # 삭제
-```
-
-### 방화벽 (Oracle Cloud)
-
-```bash
-# Oracle Security List + OS iptables 모두 열어야 합니다
-sudo iptables -I INPUT 6 -m state --state NEW -p tcp --dport 3000 -j ACCEPT
-sudo netfilter-persistent save
-```
-
----
-
-## 로컬 테스트
-
-```powershell
-# PowerShell에서 실행 (Node 서버가 3000포트에서 실행 중이어야 함)
-.\test-webhook.ps1
-
-# stage를 바꿔서 테스트
-.\test-webhook.ps1 -Stage PROGRESS
-.\test-webhook.ps1 -Stage DONE
+PENDING_ACK
+    │  scanPendingTasks → DM 전송 성공 + dm_sent_at, deadline_ack 기록
+    ▼
+DM_SENT
+    ├─ [✅ 수락 클릭]  → ACCEPTED  → 봇이 PROGRESS DM 자동 발송 (▶️ 시작 버튼)
+    │                      │  [▶️ 시작 클릭]  → IN_PROGRESS → 봇이 DONE DM 자동 발송 (🏁 완료 버튼)
+    │                      │                       │  [🏁 완료 클릭 + done_note 모달]  → DONE
+    │                      │                       └─────────────────────────────────────────
+    │                      └──────────────────────────────────────────────────
+    ├─ [❌ 거절 클릭 + reject_reason 모달]  → REJECTED
+    └─ [30분 무응답 → deadline_ack 경과]  → NO_RESPONSE (retry_count++)
 ```
 
 ---
@@ -291,12 +100,157 @@ sudo netfilter-persistent save
 
 ```
 Alam-Bot-Discord/
-├── index.js              Discord Bot + Express 서버
+├── index.js                  Discord Bot + Express 서버
 ├── gas/
-│   └── Code.gs           Google Apps Script 전체 코드
-├── .env.example          환경변수 템플릿 (시크릿 제외)
-├── .env                  실제 환경변수 (gitignore됨)
-├── test-webhook.ps1      /webhook 로컬 테스트 스크립트
+│   └── Code.gs               Google Apps Script 전체 코드
+├── docs/
+│   ├── sheet_schema.md       xlsx 탭별 헤더 명세 + Code.gs 컬럼명 검증표
+│   └── payloads.md           GAS ↔ Bot API payload 스키마
+├── .env.example              환경변수 템플릿 (시크릿 제외)
+├── .env                      실제 환경변수 (gitignore됨)
+├── test-webhook.ps1          GAS → Bot /webhook 테스트 (PowerShell)
+├── test-gas-callback.ps1     Bot → GAS doPost 테스트 (PowerShell)
 ├── package.json
 └── README.md
 ```
+
+---
+
+## GAS 배포 절차
+
+1. [script.google.com](https://script.google.com) → 새 프로젝트 생성
+2. `gas/Code.gs` 전체 내용을 붙여넣고 저장
+3. **프로젝트 설정 → 스크립트 속성** 에 두 개 등록:
+   - `SPREADSHEET_ID` = 스프레드시트 URL 중 `/d/` 뒤 식별자
+   - `DISCORD_WEBHOOK_URL` = `http://158.180.78.10:3000/webhook`
+4. **배포 → 새 배포 → 웹앱**:
+   - 실행 계정: **나 (Me)**
+   - 액세스 권한: **모든 사용자 (Anyone)**
+   - 배포 후 실행 URL을 복사 → Oracle 서버 `.env`의 `GAS_WEB_APP_URL` 에 입력
+5. GAS 편집기에서 `ensureExtraCols` 함수를 **1회 수동 실행** (batch_tasks에 추가 컬럼 자동 생성)
+6. `setupTriggers` 함수를 **1회 수동 실행** → 권한 승인 팝업 → 허용
+
+---
+
+## Oracle 서버 pm2 배포 절차
+
+### 사전 요건
+
+```bash
+node -v          # 18 이상 확인
+npm install -g pm2
+```
+
+### 최초 배포
+
+```bash
+git clone https://github.com/YOUR_ORG/Alam-Bot-Discord.git
+cd Alam-Bot-Discord
+npm install
+cp .env.example .env
+nano .env            # BOT_TOKEN, GAS_WEB_APP_URL 입력
+
+pm2 start index.js --name alam-bot
+pm2 save
+pm2 startup          # 출력된 sudo 명령어 복사·실행 (재부팅 자동 시작)
+```
+
+### 업데이트 배포
+
+```bash
+git pull origin main
+npm install          # package.json 변경 시만
+pm2 reload alam-bot
+```
+
+### pm2 주요 명령어
+
+```bash
+pm2 list                    # 프로세스 목록
+pm2 logs alam-bot           # 실시간 로그
+pm2 logs alam-bot --lines 200
+pm2 monit                   # CPU/메모리 모니터
+pm2 stop alam-bot
+pm2 delete alam-bot
+```
+
+### Oracle Cloud 방화벽
+
+```bash
+# Oracle Security List + OS iptables 모두 개방 필요
+sudo iptables -I INPUT 6 -m state --state NEW -p tcp --dport 3000 -j ACCEPT
+sudo netfilter-persistent save
+```
+
+---
+
+## 로컬 테스트 방법
+
+### /webhook 테스트 (GAS → Bot 방향)
+
+```powershell
+# 기본 (ACK 단계, DM 전송 테스트)
+.\test-webhook.ps1
+
+# PROGRESS / DONE 단계 테스트
+.\test-webhook.ps1 -Stage PROGRESS
+.\test-webhook.ps1 -Stage DONE
+
+# 특정 사용자 ID, row_id 지정
+.\test-webhook.ps1 -DiscordUserId "1270201123218784312" -RowId "T-20260222-001"
+```
+
+### GAS doPost 테스트 (Bot → GAS 방향)
+
+```powershell
+# GAS_WEB_APP_URL을 환경변수로 미리 설정하면 편리합니다
+$env:GAS_WEB_APP_URL = "https://script.google.com/macros/s/.../exec"
+
+.\test-gas-callback.ps1 -GasUrl $env:GAS_WEB_APP_URL -Action ACCEPTED
+.\test-gas-callback.ps1 -GasUrl $env:GAS_WEB_APP_URL -Action REJECTED
+.\test-gas-callback.ps1 -GasUrl $env:GAS_WEB_APP_URL -Action IN_PROGRESS
+.\test-gas-callback.ps1 -GasUrl $env:GAS_WEB_APP_URL -Action DONE
+```
+
+---
+
+## 검증 체크리스트
+
+GAS 배포 및 Bot 실행 후 아래 순서로 E2E 동작을 검증합니다.
+
+```
+[ ] 1. GAS: setupTriggers 수동 실행 → 권한 승인 팝업 허용
+        확인: GAS 편집기 → 트리거 탭에서 scanPendingTasks(5분), checkNoResponse(10분) 목록 확인
+
+[ ] 2. GAS: ensureExtraCols 수동 실행
+        확인: batch_tasks 1행에 dm_sent_at, done_note, actor_discord_user_id 컬럼 추가됨
+
+[ ] 3. GAS: scanPendingTasks 수동 실행
+        전제: batch_tasks에 status=PENDING_ACK, assignee_real_name=directory에 있는 이름 행 존재
+        확인: Bot /webhook 200 응답 → Discord DM 도착 → status 가 DM_SENT 로 변경 + deadline_ack 세팅
+
+[ ] 4. Discord: DM에서 ✅ 수락 클릭
+        확인: Bot이 GAS_WEB_APP_URL로 ACCEPTED POST → status ACCEPTED 변경 + PROGRESS DM 도착
+
+[ ] 5. Discord: PROGRESS DM에서 ▶️ 시작 클릭
+        확인: status IN_PROGRESS 변경 + DONE DM 도착
+
+[ ] 6. Discord: DONE DM에서 🏁 완료 클릭 → done_note 모달 입력 후 제출
+        확인: status DONE + done_note 시트 기록
+
+[ ] 7. REJECT 경로: DM에서 ❌ 거절 클릭 → 사유 입력 → 제출
+        확인: status REJECTED + reject_reason 시트 기록
+
+[ ] 8. NO_RESPONSE 경로: deadline_ack를 과거 시각으로 수정 후 checkNoResponse 수동 실행
+        확인: status NO_RESPONSE + retry_count 증가
+
+[ ] 9. 공지 채널 확인 (ANNOUNCE_CHANNEL_ID 설정 시):
+        DM 전송 시 공지 채널(1473144299146182891)에도 배정 embed 게시됨
+```
+
+---
+
+## Payload 스키마 참조
+
+자세한 payload 스키마(요청/응답 필드, 예시 JSON)는 [`docs/payloads.md`](docs/payloads.md) 참조.
+시트 헤더 전수 검증표는 [`docs/sheet_schema.md`](docs/sheet_schema.md) 참조.

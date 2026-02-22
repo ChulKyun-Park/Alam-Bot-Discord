@@ -25,8 +25,20 @@ const SHEET = {
   AVAIL    : "availability",
 };
 
-// batch_tasks 추가 컬럼 (기존 헤더에 없을 경우 GAS가 자동 생성)
-const EXTRA_COLS = ["dm_sent_at", "done_note", "actor_discord_user_id"];
+// batch_tasks 안전망 컬럼 목록
+// - xlsx batch_tasks에 이미 있는 컬럼: deadline_ack, last_event_at, retry_count, reject_reason
+//   → ensureExtraCols가 이미 존재하면 스킵하므로 중복 등록해도 무방
+// - xlsx에 없어서 GAS가 새로 추가해야 하는 컬럼: dm_sent_at, done_note, actor_discord_user_id
+const EXTRA_COLS = [
+  "dm_sent_at",            // scanPendingTasks가 기록
+  "done_note",             // doPost(DONE) 시 기록
+  "actor_discord_user_id", // doPost 시 버튼 클릭자 ID 기록
+  // 아래는 xlsx에 이미 존재하지만, 신규 시트 생성 시 누락될 수 있으므로 안전망으로 포함
+  "deadline_ack",          // scanPendingTasks가 기록 (now + NO_RESPONSE_MINUTES)
+  "last_event_at",         // 모든 상태 변경 시 갱신
+  "retry_count",           // checkNoResponse가 증가
+  "reject_reason",         // doPost(REJECTED) 시 기록
+];
 
 // NO_RESPONSE 판단 기준 (분)
 const NO_RESPONSE_MINUTES = 30;
@@ -96,9 +108,9 @@ function iso()  { return now().toISOString(); }
 
 // ── directory 매핑 헬퍼 ──────────────────────────────────────────────────────
 /**
- * directory 탭 전체를 읽어 두 개의 맵을 반환:
- *   nameToUid  : real_name  → discord_user_id  (status=active만)
- *   nameToLang : real_name  → language
+ * directory 탭 전체를 읽어 real_name → discord_user_id 맵을 반환.
+ * 조건: directory.status == "active" 인 행만 포함.
+ * 매핑 키 = directory.real_name = batch_tasks.assignee_real_name
  */
 function buildDirectoryMaps() {
   var sheet  = getSheet(SHEET.DIRECTORY);
