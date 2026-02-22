@@ -24,27 +24,25 @@
 
 ### Bot `.env` 파일 (Oracle 서버)
 
-```
-# 필수 1: Discord Developer Portal → Bot → Reset Token
-BOT_TOKEN=실제_봇_토큰
+> 아래 키 이름만 기재합니다. **값은 여기에 쓰지 않습니다.**
 
-# 필수 2: GAS 배포 URL (아래 GAS 배포 절차 참고)
-GAS_WEB_APP_URL=https://script.google.com/macros/s/{DEPLOYMENT_ID}/exec
+| 환경변수 키 | 필수 여부 | 설명 |
+|---|---|---|
+| `BOT_TOKEN` | 필수 | Discord Developer Portal → Bot → Reset Token |
+| `GAS_WEB_APP_URL` | 필수 | GAS 배포 후 발급되는 웹앱 실행 URL |
+| `ANNOUNCE_CHANNEL_ID` | 선택 | 최초 배정(ACK 단계) 시 게시할 채널 ID. 비우면 비활성화 |
+| `PORT` | 선택 | HTTP 서버 포트 (기본 `3000`) |
 
-# 선택: 공지 채널 (비워두면 비활성화)
-ANNOUNCE_CHANNEL_ID=1473144299146182891
-
-PORT=3000
-```
+`.env.example` 파일을 복사해 `.env`로 만든 후 값을 입력하세요.
 
 ### GAS Script Properties (GAS 편집기 → 프로젝트 설정 → 스크립트 속성)
 
-| Property 키 | 값 |
+| Property 키 | 설명 |
 |---|---|
-| `SPREADSHEET_ID` | 스프레드시트 URL에서 `/d/` 뒤 문자열 |
-| `DISCORD_WEBHOOK_URL` | `http://158.180.78.10:3000/webhook` |
+| `SPREADSHEET_ID` | 관리 스프레드시트 URL 중 `/d/` 뒤 식별자 |
+| `DISCORD_WEBHOOK_URL` | Bot 서버 외부 접근 URL + `/webhook` |
 
-> Script Properties는 GAS 내부에서만 참조되며 코드에 노출되지 않습니다.
+> Script Properties에는 값을 직접 입력하세요. 코드나 문서에 기재하지 않습니다.
 
 ---
 
@@ -57,7 +55,7 @@ PORT=3000
           │ scanPendingTasks (5분 트리거)
           ▼
 [GAS callBotWebhook]
-   POST http://158.180.78.10:3000/webhook  { stage:"ACK" }
+   POST {DISCORD_WEBHOOK_URL}  { stage:"ACK" }
           │
           ▼
 [Discord Bot /webhook]
@@ -77,7 +75,7 @@ PORT=3000
           │ (DONE 처리 후)
           ▼
 [GAS _dispatchReviewDm]
-   POST http://158.180.78.10:3000/webhook  { stage:"REVIEW", reviewer_discord_user_id }
+   POST {DISCORD_WEBHOOK_URL}  { stage:"REVIEW", reviewer_discord_user_id }
           │
           ▼
 [Discord Bot /webhook]
@@ -138,7 +136,7 @@ Alam-Bot-Discord/
 2. `gas/Code.gs` 전체 내용을 붙여넣고 저장
 3. **프로젝트 설정 → 스크립트 속성** 에 두 개 등록:
    - `SPREADSHEET_ID` = 스프레드시트 URL 중 `/d/` 뒤 식별자
-   - `DISCORD_WEBHOOK_URL` = `http://158.180.78.10:3000/webhook`
+   - `DISCORD_WEBHOOK_URL` = Bot 서버의 외부 접근 URL + `/webhook` (값은 직접 입력)
 4. **배포 → 새 배포 → 웹앱**:
    - 실행 계정: **나 (Me)**
    - 액세스 권한: **모든 사용자 (Anyone)**

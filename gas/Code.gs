@@ -220,6 +220,7 @@ function getTaskStatusText(language, action) {
   var ko = isKoreanSource(language);
   switch (action) {
     case "ACCEPTED":
+    case "START":
     case "IN_PROGRESS": return ko ? "작업중"    : "번역중";
     case "DONE":        return ko ? "작업 완료" : "번역 완료";
     case "REVIEW_START":return "검수중";
@@ -462,7 +463,8 @@ function checkNoResponse() {
 //    { row_id, action, reject_reason?, done_note?, actor_discord_user_id }
 //
 //    action 목록:
-//    ACCEPTED | REJECTED | IN_PROGRESS | DONE | REVIEW_START | REVIEW_DONE
+//    ACCEPTED | REJECTED | START | DONE | REVIEW_START | REVIEW_DONE
+//    (하위호환: IN_PROGRESS → START alias로 처리)
 // ═══════════════════════════════════════════════════════════════════════════
 function doPost(e) {
   try {
@@ -506,7 +508,8 @@ function doPost(e) {
         break;
 
       // ── 작업 시작 ────────────────────────────────────────────────────────
-      case "IN_PROGRESS":
+      case "START":
+      case "IN_PROGRESS": // 하위호환 alias
         setCell(sheet, ri, f.STATUS,          "IN_PROGRESS");
         setCell(sheet, ri, f.TASK_START_DATE, today);
         setCell(sheet, ri, f.TASK_STATUS,     getTaskStatusText(language, "IN_PROGRESS"));

@@ -57,7 +57,7 @@ async function postToGas(payload, retriesLeft = 1) {
 
     const text = await res.text().catch(() => "");
     if (!res.ok) throw new Error(`GAS HTTP ${res.status}`);
-    log(`GAS OK row_id=${payload.row_id} action=${payload.action}:`, text.slice(0, 120));
+    log(`GAS OK row_id=${payload.row_id} action=${payload.action} status=${res.status}`);
     return text;
   } catch (e) {
     clearTimeout(tid);
@@ -304,10 +304,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return;
       }
 
-      // ③ 시작: GAS에 IN_PROGRESS 기록 → DONE DM 전송
+      // ③ 시작: GAS에 START 기록 → DONE DM 전송
       if (action === "start") {
         await interaction.deferReply({ ephemeral: true });
-        await postToGas({ row_id: rowId, action: "IN_PROGRESS", actor_discord_user_id: actorId });
+        await postToGas({ row_id: rowId, action: "START", actor_discord_user_id: actorId });
         await interaction.message.edit({ components: [] }).catch(() => {});
 
         const origEmbed = interaction.message.embeds[0];
