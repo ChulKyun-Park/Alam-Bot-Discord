@@ -3,9 +3,8 @@
 // 파일: Code.gs
 //
 // Script Properties (GAS 편집기 → 프로젝트 설정 → 스크립트 속성에서 설정):
-//   SPREADSHEET_ID       : 스프레드시트 ID (URL에서 추출)
-//   DISCORD_WEBHOOK_URL  : Discord Bot의 /webhook 엔드포인트 URL
-//                          예) https://your-server.com:3000/webhook
+//   SPREADSHEET_ID       : 166o1GSu7FhWpK-yKDPOzN7xOyfgQRewriWU8WqdoxwI
+//   DISCORD_WEBHOOK_URL  : http://158.180.78.10:3000/webhook
 //
 // 상태값: PENDING_ACK → DM_SENT → ACCEPTED / REJECTED / NO_RESPONSE
 //         ACCEPTED → IN_PROGRESS → DONE
