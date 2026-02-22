@@ -89,6 +89,7 @@ const STAGE_FOOTER = {
   ACK      : "✅ 수락 / ❌ 거절 버튼으로 응답해 주세요.",
   PROGRESS : "▶️ 작업 준비가 되면 [시작] 버튼을 눌러주세요.",
   DONE     : "🏁 작업 완료 후 [완료] 버튼을 눌러 완료 처리해 주세요.",
+  REVIEW   : "🔍 검수 시작 시 [검수 시작], 완료 시 [검수 완료] 버튼을 눌러주세요.",
 };
 
 function buildAssignEmbed({ project, language, file_link, assignee_real_name, pm_real_name, row_id, stage }) {
@@ -150,6 +151,29 @@ function buildDoneButtons(row_id) {
   );
 }
 
+function buildReviewButtons(row_id) {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(makeId("review_start", row_id))
+      .setLabel("🔍 검수 시작")
+      .setStyle(ButtonStyle.Primary),
+    new ButtonBuilder()
+      .setCustomId(makeId("review_done", row_id))
+      .setLabel("✅ 검수 완료")
+      .setStyle(ButtonStyle.Success),
+  );
+}
+
+// 검수 시작 후: 검수 완료 버튼만 남기는 단독 행
+function buildReviewDoneButton(row_id) {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(makeId("review_done", row_id))
+      .setLabel("✅ 검수 완료")
+      .setStyle(ButtonStyle.Success),
+  );
+}
+
 // ── DM 전송 헬퍼 ─────────────────────────────────────────────────────────────
 async function sendDm(discord_user_id, embedData, stage) {
   const user  = await client.users.fetch(String(discord_user_id));
@@ -158,6 +182,7 @@ async function sendDm(discord_user_id, embedData, stage) {
     ACK      : [buildAckButtons(embedData.row_id)],
     PROGRESS : [buildProgressButtons(embedData.row_id)],
     DONE     : [buildDoneButtons(embedData.row_id)],
+    REVIEW   : [buildReviewButtons(embedData.row_id)],
   };
   return user.send({ embeds: [embed], components: buttonMap[stage] || [] });
 }
@@ -177,7 +202,8 @@ async function postToAnnounceChannel(embedData, stage) {
 
 // ── /webhook ─────────────────────────────────────────────────────────────────
 // GAS → Bot: 작업 배정 DM 전송 요청
-// stage: "ACK" | "PROGRESS" | "DONE"  (기본값 "ACK")
+// stage: "ACK" | "PROGRESS" | "DONE" | "REVIEW"  (기본값 "ACK")
+// REVIEW 단계는 reviewer_discord_user_id 필드를 사용 (없으면 discord_user_id 폴백)
 app.post("/webhook", async (req, res) => {
   try {
     const {
@@ -186,21 +212,45 @@ app.post("/webhook", async (req, res) => {
       language,
       file_link,
       assignee_real_name,
+      reviewer_real_name,
       discord_user_id,
+      reviewer_discord_user_id,
       pm_real_name,
       stage = "ACK",
     } = req.body || {};
 
-    if (!row_id || !discord_user_id) {
-      return res.status(400).json({ ok: false, error: "row_id 또는 discord_user_id 누락" });
+    if (!row_id) {
+      return res.status(400).json({ ok: false, error: "row_id 누락" });
     }
 
-    const embedData = { row_id, project, language, file_link, assignee_real_name, pm_real_name };
+    // REVIEW 단계: 검수자 ID 우선, 없으면 discord_user_id 폴백
+    const targetUserId = (stage === "REVIEW")
+      ? (reviewer_discord_user_id || discord_user_id)
+      : discord_user_id;
 
-    await sendDm(discord_user_id, embedData, stage);
-    await postToAnnounceChannel(embedData, stage); // 공지 채널 (ANNOUNCE_CHANNEL_ID 설정 시)
+    if (!targetUserId) {
+      return res.status(400).json({ ok: false, error: "discord_user_id 누락" });
+    }
 
-    log(`DM 전송 성공 row_id=${row_id} to=${discord_user_id} stage=${stage}`);
+    // REVIEW 단계일 때 담당자명을 검수자명으로 표시
+    const displayName = (stage === "REVIEW" && reviewer_real_name)
+      ? reviewer_real_name
+      : assignee_real_name;
+
+    const embedData = {
+      row_id,
+      project,
+      language,
+      file_link,
+      assignee_real_name : displayName,
+      pm_real_name,
+    };
+
+    await sendDm(targetUserId, embedData, stage);
+    // 공지 채널: ACK 단계(최초 배정)에만 게시
+    if (stage === "ACK") await postToAnnounceChannel(embedData, stage);
+
+    log(`DM 전송 성공 row_id=${row_id} to=${targetUserId} stage=${stage}`);
     return res.json({ ok: true });
   } catch (e) {
     log("DM 전송 실패:", e?.message || e);
@@ -281,6 +331,24 @@ client.on(Events.InteractionCreate, async (interaction) => {
           .setMaxLength(500);
         modal.addComponents(new ActionRowBuilder().addComponents(input));
         await interaction.showModal(modal);
+        return;
+      }
+
+      // ⑤ 검수 시작: GAS에 REVIEW_START 기록
+      if (action === "review_start") {
+        await interaction.deferReply({ ephemeral: true });
+        await postToGas({ row_id: rowId, action: "REVIEW_START", actor_discord_user_id: actorId });
+        await interaction.message.edit({ components: [buildReviewDoneButton(rowId)] }).catch(() => {});
+        await interaction.editReply("🔍 검수를 시작합니다. 완료 후 [✅ 검수 완료] 버튼을 눌러주세요.");
+        return;
+      }
+
+      // ⑥ 검수 완료: GAS에 REVIEW_DONE 기록
+      if (action === "review_done") {
+        await interaction.deferReply({ ephemeral: true });
+        await postToGas({ row_id: rowId, action: "REVIEW_DONE", actor_discord_user_id: actorId });
+        await interaction.message.edit({ components: [] }).catch(() => {});
+        await interaction.editReply("✅ 검수 완료 처리되었습니다. 수고하셨습니다!");
         return;
       }
     }

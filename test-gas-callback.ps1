@@ -3,7 +3,7 @@
 # 사용법: .\test-gas-callback.ps1 -GasUrl "https://script.google.com/macros/s/.../exec"
 #         .\test-gas-callback.ps1 -GasUrl $env:GAS_WEB_APP_URL -Action REJECTED
 #
-# Action 값: ACCEPTED | REJECTED | IN_PROGRESS | DONE
+# Action 값: ACCEPTED | REJECTED | IN_PROGRESS | DONE | REVIEW_START | REVIEW_DONE
 # ─────────────────────────────────────────────────────────────────────────────
 
 param(
@@ -30,6 +30,7 @@ if ($Action -eq "REJECTED") {
 if ($Action -eq "DONE") {
     $Payload["done_note"] = $DoneNote
 }
+# REVIEW_START / REVIEW_DONE: 추가 필드 없음 (actor_discord_user_id만 전송)
 
 $JsonBody = $Payload | ConvertTo-Json -Depth 5 -Compress
 $Bytes    = [System.Text.Encoding]::UTF8.GetBytes($JsonBody)
@@ -71,7 +72,11 @@ catch {
 
 Write-Host ""
 Write-Host "각 Action별 테스트 예시:" -ForegroundColor DarkGray
+Write-Host '  # 작업자 플로우'
 Write-Host '  .\test-gas-callback.ps1 -GasUrl $env:GAS_WEB_APP_URL -Action ACCEPTED'
 Write-Host '  .\test-gas-callback.ps1 -GasUrl $env:GAS_WEB_APP_URL -Action REJECTED'
 Write-Host '  .\test-gas-callback.ps1 -GasUrl $env:GAS_WEB_APP_URL -Action IN_PROGRESS'
 Write-Host '  .\test-gas-callback.ps1 -GasUrl $env:GAS_WEB_APP_URL -Action DONE'
+Write-Host '  # 검수자 플로우'
+Write-Host '  .\test-gas-callback.ps1 -GasUrl $env:GAS_WEB_APP_URL -Action REVIEW_START'
+Write-Host '  .\test-gas-callback.ps1 -GasUrl $env:GAS_WEB_APP_URL -Action REVIEW_DONE'
