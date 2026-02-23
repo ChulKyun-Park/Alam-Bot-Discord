@@ -16,12 +16,11 @@ const {
 } = require("discord.js");
 
 // ── 환경변수 ─────────────────────────────────────────────────────────────────
-const BOT_TOKEN           = process.env.BOT_TOKEN;  // .env에서 BOT_TOKEN을 가져옵니다.
 const GAS_WEB_APP_URL     = process.env.GAS_WEB_APP_URL;
 const PORT                = Number(process.env.PORT || 3000);
 const ANNOUNCE_CHANNEL_ID = process.env.ANNOUNCE_CHANNEL_ID || ""; // 선택
 
-if (!BOT_TOKEN)       throw new Error("환경변수 BOT_TOKEN이 비어 있습니다.");
+if (!process.env.BOT_TOKEN)       throw new Error("환경변수 BOT_TOKEN이 비어 있습니다.");
 if (!GAS_WEB_APP_URL) throw new Error("환경변수 GAS_WEB_APP_URL이 비어 있습니다.");
 
 const app = express();
@@ -393,7 +392,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
 // ── 서버 기동 ────────────────────────────────────────────────────────────────
 app.listen(PORT, () => log(`HTTP 서버 시작: :${PORT}`));
-client.login(BOT_TOKEN).catch((e) => {
+client.login(process.env.BOT_TOKEN).catch((e) => {
   log("로그인 실패:", e?.message || e);
   process.exit(1);
 });
