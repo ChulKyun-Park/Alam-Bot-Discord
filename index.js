@@ -1,4 +1,4 @@
-require("dotenv").config();
+require("dotenv").config();  // .env 파일을 불러오기
 
 const express = require("express");
 const {
@@ -201,9 +201,6 @@ async function postToAnnounceChannel(embedData, stage) {
 }
 
 // ── /webhook ─────────────────────────────────────────────────────────────────
-// GAS → Bot: 작업 배정 DM 전송 요청
-// stage: "ACK" | "PROGRESS" | "DONE" | "REVIEW"  (기본값 "ACK")
-// REVIEW 단계는 reviewer_discord_user_id 필드를 사용 (없으면 discord_user_id 폴백)
 app.post("/webhook", async (req, res) => {
   try {
     const {
@@ -223,7 +220,6 @@ app.post("/webhook", async (req, res) => {
       return res.status(400).json({ ok: false, error: "row_id 누락" });
     }
 
-    // REVIEW 단계: 검수자 ID 우선, 없으면 discord_user_id 폴백
     const targetUserId = (stage === "REVIEW")
       ? (reviewer_discord_user_id || discord_user_id)
       : discord_user_id;
@@ -232,7 +228,6 @@ app.post("/webhook", async (req, res) => {
       return res.status(400).json({ ok: false, error: "discord_user_id 누락" });
     }
 
-    // REVIEW 단계일 때 담당자명을 검수자명으로 표시
     const displayName = (stage === "REVIEW" && reviewer_real_name)
       ? reviewer_real_name
       : assignee_real_name;
@@ -247,7 +242,6 @@ app.post("/webhook", async (req, res) => {
     };
 
     await sendDm(targetUserId, embedData, stage);
-    // 공지 채널: ACK 단계(최초 배정)에만 게시
     if (stage === "ACK") await postToAnnounceChannel(embedData, stage);
 
     log(`DM 전송 성공 row_id=${row_id} to=${targetUserId} stage=${stage}`);
