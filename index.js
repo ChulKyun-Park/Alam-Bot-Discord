@@ -16,7 +16,7 @@ const {
 } = require("discord.js");
 
 // ── 환경변수 ─────────────────────────────────────────────────────────────────
-const BOT_TOKEN           = process.env.BOT_TOKEN;
+const BOT_TOKEN           = process.env.BOT_TOKEN;  // .env에서 BOT_TOKEN을 가져옵니다.
 const GAS_WEB_APP_URL     = process.env.GAS_WEB_APP_URL;
 const PORT                = Number(process.env.PORT || 3000);
 const ANNOUNCE_CHANNEL_ID = process.env.ANNOUNCE_CHANNEL_ID || ""; // 선택
