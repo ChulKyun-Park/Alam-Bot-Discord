@@ -120,12 +120,9 @@ function buildAssignEmbed({
       { name: "제목",      value: String(project  || "-"), inline: false },
       { name: "파일 링크", value: file_link ? String(file_link) : "-", inline: false },
     )
-    .setFooter({
-      text: (STAGE_FOOTER[stage] || "")
-        + "||" + String(is_ko ?? "")
-        + "||" + String(assignee_type ?? ""),
-    });
-
+    // parseEmbedFields
+  const footerParts = (embed.footer?.text || "").split("\x01");
+  
   if (deadlineValue) {
     embed.addFields({ name: "⏰ 마감일시", value: deadlineValue, inline: false }); // ✅ 추가
   }
@@ -510,4 +507,5 @@ client.login(process.env.BOT_TOKEN).catch((e) => {
   log("로그인 실패:", e?.message || e);
   process.exit(1);
 });
+
 
