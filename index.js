@@ -122,8 +122,8 @@ function buildAssignEmbed({
     )
     .setFooter({
       text: (STAGE_FOOTER[stage] || "")
-        + "\u200b" + String(is_ko ?? "")
-        + "\u200b" + String(assignee_type ?? ""),
+        + "||" + String(is_ko ?? "")
+        + "||" + String(assignee_type ?? ""),
     });
 
   if (deadlineValue) {
@@ -139,7 +139,7 @@ function buildAssignEmbed({
 function parseEmbedFields(embed) {
   const get  = (name) => embed.fields?.find((f) => f.name === name)?.value || "";
   const link = get("파일 링크");
-  const footerParts = (embed.footer?.text || "").split("\u200b");
+  const footerParts = (embed.footer?.text || "").split("||");
   const isKoVal     = footerParts[1] ?? "";
   const assigneeVal = footerParts[2] ?? "WORKER";
 
@@ -510,3 +510,4 @@ client.login(process.env.BOT_TOKEN).catch((e) => {
   log("로그인 실패:", e?.message || e);
   process.exit(1);
 });
+
