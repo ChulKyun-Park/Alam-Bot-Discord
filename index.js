@@ -90,6 +90,15 @@ function parseCustomId(customId) {
 
 function makeId(action, rowId) { return `${action}:${rowId}`; }
 
+// row_id = "{uuid}:{isKo}:{assigneeType}" 형식에서 메타 파싱
+function parseRowId(rowId) {
+  const parts      = String(rowId || "").split(":");
+  const pureId     = parts[0] || "";
+  const isKo       = parts[1] === "1";
+  const assigneeType = parts[2] || "WORKER";
+  return { pureId, isKo, assigneeType };
+}
+
 const STAGE_FOOTER = {
   ACK             : "수락 / 거절 버튼으로 응답해 주세요.",
   KO_WORKER_WAIT  : "작업 준비가 되면 [시작] 버튼을 눌러주세요.",
@@ -103,7 +112,7 @@ const STAGE_FOOTER = {
 
 function buildAssignEmbed({
   title, project, artist, language, file_link, runtime,
-  stage, note, is_ko, assignee_type,
+  stage, note,
   deadline_date, deadline_time,
 }) {
   const deadlineValue = (deadline_date || deadline_time)
@@ -119,11 +128,7 @@ function buildAssignEmbed({
       { name: "제목",      value: String(project  || "-"), inline: false },
       { name: "파일 링크", value: file_link ? String(file_link) : "-", inline: false },
     )
-    .setFooter({
-      text: (STAGE_FOOTER[stage] || "")
-        + "\x01" + String(is_ko ?? "")
-        + "\x01" + String(assignee_type ?? ""),
-    });
+    .setFooter({ text: STAGE_FOOTER[stage] || "" }); // ← 순수 텍스트만
 
   if (deadlineValue) {
     embed.addFields({ name: "⏰ 마감일시", value: deadlineValue, inline: false });
@@ -134,22 +139,10 @@ function buildAssignEmbed({
   return embed;
 }
 
+// embed에서 표시 데이터만 파싱 (is_ko/assignee_type은 row_id에서 파싱)
 function parseEmbedFields(embed) {
   const get  = (name) => embed.fields?.find((f) => f.name === name)?.value || "";
   const link = get("파일 링크");
-
-  // 구버전(\u200b), 중간버전(||), 현재버전(\x01) 모두 호환
-  const footerText = embed.footer?.text || "";
-  let footerParts;
-  if (footerText.includes("\x01")) {
-    footerParts = footerText.split("\x01");
-  } else if (footerText.includes("\u200b")) {
-    footerParts = footerText.split("\u200b");
-  } else {
-    footerParts = footerText.split("||");
-  }
-  const isKoVal     = footerParts[1] ?? "";
-  const assigneeVal = footerParts[2] ?? "WORKER";
 
   const deadlineRaw   = get("⏰ 마감일시");
   const deadlineParts = deadlineRaw ? deadlineRaw.split(" ") : [];
@@ -163,8 +156,6 @@ function parseEmbedFields(embed) {
     runtime       : get("영상 길이"),
     file_link     : link === "-" ? "" : link,
     title         : embed.title || "",
-    is_ko         : isKoVal === "true",
-    assignee_type : assigneeVal || "WORKER",
     deadline_date,
     deadline_time,
   };
@@ -324,19 +315,19 @@ client.on(Events.InteractionCreate, async (interaction) => {
         await interaction.deferReply({ flags: 64 });
         await postToGas({ row_id: rowId, action: "ACCEPTED", actor_discord_user_id: actorId });
         await interaction.message.edit({ components: [] }).catch(() => {});
-        const origEmbed   = interaction.message.embeds[0];
-        log("RAW embed fields:", JSON.stringify(origEmbed?.fields || []));
-        const embedFields = origEmbed ? parseEmbedFields(origEmbed) : {};
-        log("parseEmbedFields 결과:", JSON.stringify(embedFields));
-        const isKo         = embedFields.is_ko;
-        const assigneeType = embedFields.assignee_type || "WORKER";
-        const isQa         = assigneeType === "QA";
+
+        // ← row_id에서 is_ko, assigneeType 파싱 (footer 불필요)
+        const { isKo, assigneeType } = parseRowId(rowId);
+        const isQa = assigneeType === "QA";
         let nextStage;
         if (isKo && !isQa)       nextStage = "KO_WORKER_WAIT";
         else if (isKo && isQa)   nextStage = "KO_QA_WAIT";
         else if (!isKo && !isQa) nextStage = "LANG_WORKER_WAIT";
         else                     nextStage = "LANG_QA_WAIT";
         log(`accept 분기 isKo=${isKo} assigneeType=${assigneeType} nextStage=${nextStage}`);
+
+        const origEmbed   = interaction.message.embeds[0];
+        const embedFields = origEmbed ? parseEmbedFields(origEmbed) : {};
         await sendDm(actorId, { ...embedFields, row_id: rowId }, nextStage);
         await interaction.editReply("✅ 수락 완료!");
         return;
@@ -454,16 +445,18 @@ client.on(Events.InteractionCreate, async (interaction) => {
           if (reviewerId) {
             const origEmbed   = interaction.message.embeds[0];
             const embedFields = origEmbed ? parseEmbedFields(origEmbed) : {};
-            const reviewStage = isKo ? "KO_QA_REVIEW" : "LANG_QA_REVIEW";
+            const { isKo: rowIsKo } = parseRowId(rowId);
+            const reviewStage = rowIsKo ? "KO_QA_REVIEW" : "LANG_QA_REVIEW";
+            // 검수자 DM용 row_id: 순수 uuid + isKo + QA
+            const { pureId } = parseRowId(rowId);
+            const reviewRowId = `${pureId}:${rowIsKo ? "1" : "0"}:QA`;
             await sendDm(reviewerId, {
               ...embedFields,
-              row_id       : rowId,
+              row_id       : reviewRowId,
               language     : displayLang(lang),
               note         : workerNote || undefined,
-              is_ko        : isKo,
-              assignee_type: "QA",
             }, reviewStage);
-            log(`검수자 DM 발송 row_id=${rowId} lang=${lang} reviewer=${reviewerId}`);
+            log(`검수자 DM 발송 row_id=${reviewRowId} lang=${lang} reviewer=${reviewerId}`);
           }
         } catch (dmErr) {
           log("검수자 DM/스레드 오류:", dmErr?.message || dmErr);
