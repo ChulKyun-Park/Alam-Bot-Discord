@@ -101,7 +101,6 @@ const STAGE_FOOTER = {
   LANG_QA_REVIEW  : "번역물 검수 준비가 되면 [시작] 버튼을 눌러주세요.",
 };
 
-// ── ✅ buildAssignEmbed: 마감일시 필드 추가 ──────────────────────────────────
 function buildAssignEmbed({
   title, project, artist, language, file_link, runtime,
   stage, note, is_ko, assignee_type,
@@ -120,11 +119,14 @@ function buildAssignEmbed({
       { name: "제목",      value: String(project  || "-"), inline: false },
       { name: "파일 링크", value: file_link ? String(file_link) : "-", inline: false },
     )
-    // parseEmbedFields
-  const footerParts = (embed.footer?.text || "").split("\x01");
-  
+    .setFooter({
+      text: (STAGE_FOOTER[stage] || "")
+        + "\x01" + String(is_ko ?? "")
+        + "\x01" + String(assignee_type ?? ""),
+    });
+
   if (deadlineValue) {
-    embed.addFields({ name: "⏰ 마감일시", value: deadlineValue, inline: false }); // ✅ 추가
+    embed.addFields({ name: "⏰ 마감일시", value: deadlineValue, inline: false });
   }
   if (note) {
     embed.addFields({ name: "📝 특이사항", value: String(note), inline: false });
@@ -132,15 +134,24 @@ function buildAssignEmbed({
   return embed;
 }
 
-// ── ✅ parseEmbedFields: 마감일시 파싱 추가 ──────────────────────────────────
 function parseEmbedFields(embed) {
   const get  = (name) => embed.fields?.find((f) => f.name === name)?.value || "";
   const link = get("파일 링크");
-  const footerParts = (embed.footer?.text || "").split("||");
+
+  // 구버전(\u200b), 중간버전(||), 현재버전(\x01) 모두 호환
+  const footerText = embed.footer?.text || "";
+  let footerParts;
+  if (footerText.includes("\x01")) {
+    footerParts = footerText.split("\x01");
+  } else if (footerText.includes("\u200b")) {
+    footerParts = footerText.split("\u200b");
+  } else {
+    footerParts = footerText.split("||");
+  }
   const isKoVal     = footerParts[1] ?? "";
   const assigneeVal = footerParts[2] ?? "WORKER";
 
-  const deadlineRaw = get("⏰ 마감일시"); // ✅ 추가
+  const deadlineRaw   = get("⏰ 마감일시");
   const deadlineParts = deadlineRaw ? deadlineRaw.split(" ") : [];
   const deadline_date = deadlineParts[0] || "";
   const deadline_time = deadlineParts.slice(1).join(" ") || "";
@@ -154,8 +165,8 @@ function parseEmbedFields(embed) {
     title         : embed.title || "",
     is_ko         : isKoVal === "true",
     assignee_type : assigneeVal || "WORKER",
-    deadline_date,  // ✅ 추가
-    deadline_time,  // ✅ 추가
+    deadline_date,
+    deadline_time,
   };
 }
 
@@ -223,14 +234,14 @@ async function postToAnnounceChannel(content) {
 
 app.post("/webhook", async (req, res) => {
   try {
-    log("webhook payload:", JSON.stringify(req.body)); // ✅ 추가
+    log("webhook payload:", JSON.stringify(req.body));
     const {
       row_id, project, language, file_link,
       assignee_real_name, discord_user_id,
       stage = "ACK", dm_title, note, no, artist, title,
       reviewer_discord_user_ids, group_key, runtime,
       assignee_type, is_ko,
-      deadline_date, deadline_time,  // ✅ 추가
+      deadline_date, deadline_time,
     } = req.body || {};
 
     if (stage === "ALL_ACCEPTED") {
@@ -261,8 +272,8 @@ app.post("/webhook", async (req, res) => {
       note,
       is_ko             : is_ko ?? (language === "ko"),
       assignee_type     : assignee_type || "WORKER",
-      deadline_date     : deadline_date || "",  // ✅ 추가
-      deadline_time     : deadline_time || "",  // ✅ 추가
+      deadline_date     : deadline_date || "",
+      deadline_time     : deadline_time || "",
     };
 
     let resolvedStage = stage;
@@ -445,7 +456,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
             const embedFields = origEmbed ? parseEmbedFields(origEmbed) : {};
             const reviewStage = isKo ? "KO_QA_REVIEW" : "LANG_QA_REVIEW";
             await sendDm(reviewerId, {
-              ...embedFields,       // ✅ deadline_date/time 자동 포함 (parseEmbedFields에서 파싱됨)
+              ...embedFields,
               row_id       : rowId,
               language     : displayLang(lang),
               note         : workerNote || undefined,
@@ -508,6 +519,3 @@ client.login(process.env.BOT_TOKEN).catch((e) => {
   log("로그인 실패:", e?.message || e);
   process.exit(1);
 });
-
-
-
