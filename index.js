@@ -223,6 +223,7 @@ async function postToAnnounceChannel(content) {
 
 app.post("/webhook", async (req, res) => {
   try {
+    log("webhook payload:", JSON.stringify(req.body)); // ✅ 추가
     const {
       row_id, project, language, file_link,
       assignee_real_name, discord_user_id,
@@ -507,5 +508,6 @@ client.login(process.env.BOT_TOKEN).catch((e) => {
   log("로그인 실패:", e?.message || e);
   process.exit(1);
 });
+
 
 
